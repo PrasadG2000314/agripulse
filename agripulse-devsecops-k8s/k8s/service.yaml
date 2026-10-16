@@ -1,0 +1,25 @@
+# ==============================================================================
+# Kubernetes Service Manifest for AgriPulse Smart Farming Platform
+# Exposes the AgriPulse pods externally via NodePort (or LoadBalancer in Cloud)
+# ==============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: agripulse-service
+  namespace: default
+  labels:
+    app.kubernetes.io/name: agripulse
+    app.kubernetes.io/component: service
+    app: agripulse
+spec:
+  # NodePort allows direct access on any node IP via nodePort: 30080
+  # Cloud පරිසරයකදී (AWS/GCP/Azure) මෙය "LoadBalancer" ලෙස වෙනස් කළ හැක
+  type: NodePort
+  selector:
+    app: agripulse
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80          # Service IP එකෙන් ලැබෙන port එක
+      targetPort: 3000  # Pod එක ඇතුලත Node.js දුවන port එක (containerPort)
+      nodePort: 30080   # බාහිරින් ගොවීන්ට සහ පරිශීලකයින්ට සම්බන්ධ විය හැකි port එක

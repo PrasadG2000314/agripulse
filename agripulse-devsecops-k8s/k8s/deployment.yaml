@@ -1,0 +1,102 @@
+# ==============================================================================
+# Kubernetes Deployment Manifest for AgriPulse Smart Farming Platform
+# Replicas: 2 Pods (High Availability & Zero-Downtime Rolling Updates)
+# Security: PodSecurityStandards Restricted Profile (Non-Root, ReadOnlyRootFS)
+# ==============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agripulse-deployment
+  namespace: default
+  labels:
+    app.kubernetes.io/name: agripulse
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: smart-farming-system
+    app: agripulse
+spec:
+  # Pods 2ක් දුවන ආකාරයට සකසා ඇත (High Availability across nodes)
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: agripulse
+  template:
+    metadata:
+      labels:
+        app: agripulse
+        app.kubernetes.io/name: agripulse
+    spec:
+      # Pod-Level Security Context (DevSecOps Hardening)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: agripulse-app
+          image: agripulse/agripulse-app:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+
+          # Container-Level Security Context (Least Privilege)
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # Resource Limits & Requests to prevent "Noisy Neighbor" Pod starvation
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+          # Liveness Probe: Pod එක ක්‍රියාකාරීදැයි පරීක්ෂා කර අක්‍රිය වූවොත් Restart කරයි
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # Readiness Probe: Traffic ලබා ගැනීමට Pod එක සූදානම්දැයි පරීක්ෂා කරයි
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+
+          # Environment Variables
+          env:
+            - name: PORT
+              value: "3000"
+            - name: NODE_ENV
+              value: "production"
+
+          # Temporary scratch space for read-only filesystem compatibility
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
