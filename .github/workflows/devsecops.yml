@@ -1,0 +1,183 @@
+# ==============================================================================
+# AgriPulse DevSecOps CI/CD Pipeline (Root Runner)
+# Security Gates:
+#  1. Secret Scanning      -> Gitleaks
+#  2. SAST (Code Analysis) -> Semgrep (100% Free) & SonarQube
+#  3. SCA & Unit Testing   -> npm audit & npm test
+#  4. Container Security   -> Aqua Security Trivy
+#  5. Secure Deployment    -> Docker Hub Registry Push
+# ==============================================================================
+name: AgriPulse DevSecOps CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Stage 1: Secret Scanning with Gitleaks
+  # ----------------------------------------------------------------------------
+  gitleaks-secret-scan:
+    name: 🔒 Gitleaks Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history needed for secret detection across commits
+
+      - name: Run Gitleaks Secret Scanner
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: false
+
+  # ----------------------------------------------------------------------------
+  # Stage 2: Software Composition Analysis (SCA) & Unit Tests
+  # ----------------------------------------------------------------------------
+  sca-and-tests:
+    name: 🧪 Dependency Audit & Test Suite
+    runs-on: ubuntu-latest
+    needs: [gitleaks-secret-scan]
+    defaults:
+      run:
+        working-directory: ./agripulse-devsecops-k8s
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: './agripulse-devsecops-k8s/package-lock.json'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Software Composition Analysis (NPM Security Audit)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: Execute Automated Unit Tests
+        run: npm test
+
+  # ----------------------------------------------------------------------------
+  # Stage 3: SAST with Semgrep (100% Free & Open Source) + Optional SonarQube
+  # ----------------------------------------------------------------------------
+  sast-security-scan:
+    name: 🔍 Semgrep SAST Code Analysis (100% Free)
+    runs-on: ubuntu-latest
+    needs: [sca-and-tests]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Semgrep SAST Scanner (OWASP Top 10 & CWE Security Audit)
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" returntocorp/semgrep semgrep scan --config=auto /src
+        continue-on-error: true
+
+      - name: Optional SonarCloud / SonarQube Scan (If Token Configured)
+        if: "${{ env.HAS_SONAR_TOKEN == 'true' }}"
+        uses: sonarsource/sonarqube-scan-action@v2
+        with:
+          projectBaseDir: agripulse-devsecops-k8s
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          HAS_SONAR_TOKEN: ${{ secrets.SONAR_TOKEN != '' }}
+        continue-on-error: true
+
+  # ----------------------------------------------------------------------------
+  # Stage 4: Docker Build & Trivy Container Vulnerability Scan
+  # ----------------------------------------------------------------------------
+  container-vulnerability-scan:
+    name: 🛡️ Trivy Container Image Scan
+    runs-on: ubuntu-latest
+    needs: [sca-and-tests]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Local Docker Image for Scanning
+        uses: docker/build-push-action@v5
+        with:
+          context: ./agripulse-devsecops-k8s
+          file: ./agripulse-devsecops-k8s/Dockerfile
+          load: true
+          tags: agripulse-app:scan-candidate
+
+      - name: Run Aqua Security Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'agripulse-app:scan-candidate'
+          format: 'table'
+          exit-code: '0' # Set to '1' in strict production to block pipeline on CRITICAL CVEs
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+  # ----------------------------------------------------------------------------
+  # Stage 5: Push Hardened Image to Docker Hub
+  # ----------------------------------------------------------------------------
+  dockerhub-publish:
+    name: 🚀 Build & Push to Docker Hub
+    runs-on: ubuntu-latest
+    needs: [container-vulnerability-scan]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        continue-on-error: true # Skips push if DockerHub credentials aren't set in GitHub Secrets
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./agripulse-devsecops-k8s
+          file: ./agripulse-devsecops-k8s/Dockerfile
+          push: ${{ env.DOCKER_AUTH_AVAILABLE == 'true' }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/agripulse:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/agripulse:${{ github.sha }}
+        env:
+          DOCKER_AUTH_AVAILABLE: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+
+  # ----------------------------------------------------------------------------
+  # Stage 6: Kubernetes Manifest Validation (GitOps Pre-Flight Check)
+  # ----------------------------------------------------------------------------
+  k8s-manifest-validation:
+    name: ☸️ Kubernetes Manifest Validation
+    runs-on: ubuntu-latest
+    needs: [sca-and-tests]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Validate Kubernetes Manifests Syntax (Dry-Run)
+        run: |
+          docker run --rm -v "${{ github.workspace }}/agripulse-devsecops-k8s/k8s:/k8s" \
+            ghcr.io/yannh/kubeconform:latest -strict -summary /k8s/deployment.yaml /k8s/service.yaml
+        continue-on-error: true
