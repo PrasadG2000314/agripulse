@@ -89,7 +89,7 @@ GitHub Actions workflow (`.github/workflows/devsecops.yml`) මඟින් ප�
 
 1. **Gitleaks (Secret Scanning)**: Code එක තුළ API Keys හෝ Passwords නිරාවරණය වී ඇත්දැයි පරීක්ෂා කරයි.
 2. **SCA & Audit**: `npm audit` මඟින් 3rd party libraries වල දුර්වලතා හඳුනා ගනී.
-3. **SonarQube (SAST)**: Source code එකෙහි bugs, code smells සහ vulnerabilities පරීක්ෂා කරයි.
+3. **Semgrep & SonarQube (SAST)**: Source code එකෙහි bugs, security vulnerabilities සහ OWASP Top 10 ගැටලු 100% නොමිලේ Semgrep මඟින් ස්කෑන් කරයි.
 4. **Trivy (Container Security)**: Docker image එකෙහි CVEs (Common Vulnerabilities and Exposures) ස්කෑන් කරයි.
 5. **Docker Hub Registry Push**: සියලුම ආරක්ෂණ පරීක්ෂණ සමත් වූ පසු පමණක් ආරක්ෂිත Image එක Docker Hub වෙත Push කරයි.
 6. **K8s Manifest Validation**: Kubernetes yaml ගොනු වල නිවැරදි බව තහවුරු කරයි.
